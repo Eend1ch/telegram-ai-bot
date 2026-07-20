@@ -1,0 +1,17 @@
+# API-ключи
+file.json
+.env
+
+# База данных
+users.json
+
+# Кэш Python
+__pycache__/
+*.pyc
+
+# Настройки IDE
+.idea/
+
+# Лишнее
+src/openweather_api.py
+src/check_weather.py
