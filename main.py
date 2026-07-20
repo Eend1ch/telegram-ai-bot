@@ -16,17 +16,6 @@ with open('users.json', 'r', encoding='utf-8') as file:
 agents = get_agents()
 
 
-# def draw_buttons():
-#     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-#
-#     keyboard.add(telebot.types.InlineKeyboardButton(text="Стандарт", callback_data="default"))
-#
-#     for agent in agents:
-#         button = telebot.types.InlineKeyboardButton(text=agent, callback_data=agent)
-#         keyboard.add(button)
-#
-#     return keyboard
-
 def draw_buttons_under_message():
     keyboard = telebot.types.InlineKeyboardMarkup()
 
