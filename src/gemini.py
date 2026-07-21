@@ -10,6 +10,7 @@ def load_agent(name):
     with open(f"./.agents/{name}/AGENTS.md", encoding="utf-8") as f:
         return f.read()
 
+
 def gemini_answer(message, agent="default"):
     if agent == "default":
         interaction = client.interactions.create(

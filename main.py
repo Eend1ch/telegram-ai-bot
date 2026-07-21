@@ -1,10 +1,9 @@
 import telebot
 import os
 import dotenv
-from src import gemini_api
-from src.get_all_agents import get_agents
+from src import gemini
 import json
-from src.create_agent import add_agent
+from src.agent_manager import add_agent, get_agents, delete_agent
 
 dotenv.load_dotenv()
 
@@ -15,8 +14,10 @@ with open('users.json', 'r', encoding='utf-8') as file:
 
 agents = get_agents()
 
+change_mode = {}
 
-def draw_buttons_under_message():
+
+def draw_buttons_under_message(change=False):
     keyboard = telebot.types.InlineKeyboardMarkup()
 
     keyboard.add(telebot.types.InlineKeyboardButton(text="Стандарт", callback_data="default"))
@@ -25,7 +26,11 @@ def draw_buttons_under_message():
         button = telebot.types.InlineKeyboardButton(text=agent, callback_data=agent)
         keyboard.add(button)
 
-    keyboard.add(telebot.types.InlineKeyboardButton(text="Добавить агента", callback_data="create_agent"))
+    if not change:
+        keyboard.add(telebot.types.InlineKeyboardButton(text="Добавить агента", callback_data="create_agent"))
+        keyboard.add(telebot.types.InlineKeyboardButton(text="Изменить агента", callback_data="change_exist_agent"))
+    else:
+        keyboard.add(telebot.types.InlineKeyboardButton(text="Вернуться назад", callback_data="return"))
 
     return keyboard
 
@@ -42,6 +47,21 @@ def mini_markup():
     return markup
 
 
+def keyboard_yes_no(agent):
+    keyboard = telebot.types.InlineKeyboardMarkup()
+
+    button = telebot.types.InlineKeyboardButton(
+        text="Да",
+        callback_data=f"yes:{agent}")
+    keyboard.add(button)
+    button1 = telebot.types.InlineKeyboardButton(
+        text="Нет",
+        callback_data=f"no:{agent}")
+    keyboard.add(button1)
+
+    return keyboard
+
+
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
     user_id = message.chat.id
@@ -50,6 +70,7 @@ def send_welcome(message):
 
         if user_id not in users:  # если пользователь новый - добавляем его в user_data
             users[user_id] = {"agent": "default"}
+            user_data[str(user_id)] = {"agent": "default"}
 
             f.seek(0)
             json.dump(users, f, ensure_ascii=False, indent=4)
@@ -71,12 +92,11 @@ def send_message(message):
     bot.edit_message_text(
         chat_id=msg.chat.id,
         message_id=msg.message_id,
-        text=gemini_api.gemini_answer(message.text, agent=current_agent),
+        text=gemini.gemini_answer(message.text, agent=current_agent),
         reply_markup=mini_markup()
     )
 
 
-@bot.message_handler(commands=agents)
 def agent_work(message):
     bot.send_message(message.chat.id, f"Вы выбрали агента {message}. Напишите ваш запрос")
 
@@ -102,38 +122,72 @@ def callback(call):
     elif call.data == "create_agent":
         msg = bot.send_message(call.message.chat.id, text="Введите название нового агента", reply_markup=keyboard)
         bot.register_next_step_handler(msg, get_name)
+    elif call.data == "change_exist_agent":
+        change_mode[call.message.chat.id] = True
+        bot.send_message(call.message.chat.id, text="Выберите агента", reply_markup=draw_buttons_under_message(
+            change=True))
+    elif call.data.startswith("yes:"):
+        agent_name = call.data.split(":")[1]
+        msg = bot.send_message(call.message.chat.id, f"Введите новое имя для {agent_name}")
+        bot.register_next_step_handler(msg, get_name, True, agent_name)
+    elif call.data.startswith("no:"):
+        agent_name = call.data.split(":")[1]
+        msg = bot.send_message(call.message.chat.id, f"Введите новую характеристику для {agent_name}")
+        bot.register_next_step_handler(msg, get_characteristics, agent_name)
     else:
-        bot.send_message(call.message.chat.id, text=f"Вы выбрали {call.data}. Напишите ваш запрос",
-                         reply_markup=mini_markup())
-        with open('users.json', 'r+', encoding='utf-8') as f1:
-            users = json.load(f1)
-            users[user_id]["agent"] = call.data
-            user_data[user_id]["agent"] = call.data
+        if change_mode.get(call.message.chat.id):
+            change_mode.pop(call.message.chat.id, None)
 
-            f1.seek(0)
-            json.dump(users, f1, ensure_ascii=False, indent=4)
-            f1.truncate()
+            bot.send_message(call.message.chat.id, f"Вы хотите поменять имя агента {call.data}?",
+                             reply_markup=keyboard_yes_no(call.data).add
+                             (telebot.types.InlineKeyboardButton(text="Вернуться назад", callback_data="return")))
+            # переносит в иную функцию, где если выбор - да, то
+            # сразу попадаем callback вновь
+        else:
+            bot.send_message(call.message.chat.id, text=f"Вы выбрали {call.data}. Напишите ваш запрос",
+                             reply_markup=mini_markup())
+            with open('users.json', 'r+', encoding='utf-8') as f1:
+                users = json.load(f1)
+                users[user_id]["agent"] = call.data
+                user_data[user_id]["agent"] = call.data
+
+                f1.seek(0)
+                json.dump(users, f1, ensure_ascii=False, indent=4)
+                f1.truncate()
 
 
-def get_name(message):
+def get_name(message, new=True, old_agent=None):
     keyboard = telebot.types.InlineKeyboardMarkup()
     keyboard.add(
-        telebot.types.InlineKeyboardButton(text="Вернуться назад", callback_data="return"))  # дописать или переписать
+        telebot.types.InlineKeyboardButton(text="Вернуться назад", callback_data="return"))
 
-    agent_name = message.text  # Текст, который ввел пользователь
+    agent_name = message.text  # Имя, которое ввел пользователь
     bot.send_message(message.chat.id, f"Имя вашего агента - {agent_name}!")
 
+    if not new:
+        global change_mode
+        change_mode[message.chat.id] = True
+        bot.send_message(message.chat.id, f"Выберите бота, которого хотите поменять",
+                         reply_markup=draw_buttons_under_message(change=True))
+
     msg2 = bot.send_message(message.chat.id, f"Теперь введите характеристику для вашего агента", reply_markup=keyboard)
-    bot.register_next_step_handler(msg2, get_characteristics, agent_name)
+    if old_agent is None:
+        bot.register_next_step_handler(msg2, get_characteristics, agent_name)
+    else:
+        bot.register_next_step_handler(msg2, get_characteristics, agent_name, old_agent)
 
 
-def get_characteristics(message, agent_name):
+def get_characteristics(message, agent_name, old_agent=None):
     agent_characteristics = message.text
     try:
         add_agent(agent_name, agent_characteristics)
+
+        if old_agent is not None:
+            delete_agent(old_agent)
+
         global agents
         agents = get_agents()
-        bot.send_message(message.chat.id, f"Характеристика нового агента записана!")
+        bot.send_message(message.chat.id, f"Характеристика агента записана!")
         bot.send_message(message.chat.id, "Теперь вы можете выбрать бота!", reply_markup=draw_buttons_under_message())
     except Exception as e:
         bot.send_message(message.chat.id, f"Что-то пошло не так")
